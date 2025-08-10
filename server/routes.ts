@@ -8,9 +8,14 @@ import {
   insertProductSchema, 
   insertMediaSchema,
   insertAnalyticsSchema,
-  insertLanguageSchema 
+  insertLanguageSchema,
+  insertSubscriptionSchema,
+  insertSocialPostSchema
 } from "@shared/schema";
 import { generateContentSuggestions, analyzeSentiment, summarizeArticle } from "./gemini";
+import { ayrshaerAPI } from "./ayrshaer-api";
+import { logger, requestLogger, errorLogger } from "./debug";
+import { SUBSCRIPTION_PLANS, getPlanById, canUserPerformAction } from "@shared/subscription-plans";
 import multer from "multer";
 import path from "path";
 import fs from "fs";
@@ -32,6 +37,9 @@ const upload = multer({
 });
 
 export async function registerRoutes(app: Express): Promise<Server> {
+  // Add debug middleware
+  app.use(requestLogger);
+  
   // Auth middleware
   await setupAuth(app);
 
@@ -410,26 +418,55 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.post('/api/get-or-create-subscription', isAuthenticated, async (req: any, res) => {
+  // Enhanced subscription management
+  app.post('/api/create-subscription', isAuthenticated, async (req: any, res) => {
     try {
       const userId = req.user.claims.sub;
-      let user = await storage.getUser(userId);
+      const { planId } = req.body;
       
+      logger.logSubscriptionEvent('create_subscription_request', planId, userId);
+      
+      let user = await storage.getUser(userId);
       if (!user) {
         return res.status(404).json({ message: "User not found" });
       }
 
+      const plan = getPlanById(planId);
+      if (!plan) {
+        return res.status(400).json({ message: "Invalid plan ID" });
+      }
+
+      // Free plan doesn't require Stripe
+      if (planId === 'free') {
+        await storage.updateUserPlan(userId, 'free');
+        logger.logSubscriptionEvent('plan_changed', 'free', userId);
+        return res.json({ success: true, message: "Switched to free plan" });
+      }
+
+      // Check if user already has this subscription
       if (user.stripeSubscriptionId) {
         const subscription = await stripe.subscriptions.retrieve(user.stripeSubscriptionId);
-        const invoice = await stripe.invoices.retrieve(subscription.latest_invoice as string);
+        const currentPlan = subscription.items.data[0]?.price.lookup_key || subscription.metadata?.planId;
         
-        res.json({
-          subscriptionId: subscription.id,
-          clientSecret: (invoice.payment_intent as any)?.client_secret,
+        if (currentPlan === planId) {
+          return res.json({ message: "Already subscribed to this plan" });
+        }
+        
+        // Update existing subscription
+        await stripe.subscriptions.update(user.stripeSubscriptionId, {
+          items: [{
+            id: subscription.items.data[0].id,
+            price: plan.stripePriceId,
+          }],
+          proration_behavior: 'create_prorations',
         });
-        return;
+        
+        await storage.updateUserPlan(userId, planId);
+        logger.logSubscriptionEvent('plan_changed', planId, userId);
+        return res.json({ success: true, message: "Plan updated successfully" });
       }
-      
+
+      // Create new customer and subscription
       if (!user.email) {
         return res.status(400).json({ message: 'No user email on file' });
       }
@@ -437,30 +474,218 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const customer = await stripe.customers.create({
         email: user.email,
         name: `${user.firstName || ''} ${user.lastName || ''}`.trim(),
+        metadata: { userId },
       });
 
-      // Note: STRIPE_PRICE_ID needs to be set by the user
       const subscription = await stripe.subscriptions.create({
         customer: customer.id,
         items: [{
-          price: process.env.STRIPE_PRICE_ID || 'price_1234567890', // Placeholder
+          price: plan.stripePriceId,
         }],
         payment_behavior: 'default_incomplete',
         expand: ['latest_invoice.payment_intent'],
+        metadata: { userId, planId },
       });
 
       await storage.updateUserStripeInfo(userId, customer.id, subscription.id);
+      await storage.updateUserPlan(userId, planId);
 
       const invoice = subscription.latest_invoice as any;
+      logger.logSubscriptionEvent('subscription_created', planId, userId, { subscriptionId: subscription.id });
+      
       res.json({
         subscriptionId: subscription.id,
         clientSecret: invoice.payment_intent?.client_secret,
       });
     } catch (error: any) {
-      console.error("Error creating subscription:", error);
+      logger.error('subscription', 'Failed to create subscription', error, { planId: req.body.planId }, req.user?.claims?.sub);
       res.status(400).json({ error: { message: error.message } });
     }
   });
+
+  // Cancel subscription
+  app.post('/api/cancel-subscription', isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = req.user.claims.sub;
+      const user = await storage.getUser(userId);
+      
+      if (!user?.stripeSubscriptionId) {
+        return res.status(400).json({ message: "No active subscription found" });
+      }
+
+      await stripe.subscriptions.update(user.stripeSubscriptionId, {
+        cancel_at_period_end: true,
+      });
+
+      logger.logSubscriptionEvent('subscription_canceled', user.plan || 'unknown', userId);
+      res.json({ success: true, message: "Subscription will be canceled at period end" });
+    } catch (error: any) {
+      logger.error('subscription', 'Failed to cancel subscription', error, {}, req.user?.claims?.sub);
+      res.status(500).json({ error: { message: error.message } });
+    }
+  });
+
+  // Get subscription status
+  app.get('/api/subscription/status', isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = req.user.claims.sub;
+      const user = await storage.getUser(userId);
+      
+      if (!user) {
+        return res.status(404).json({ message: "User not found" });
+      }
+
+      let subscriptionData = {
+        currentPlan: user.plan || 'free',
+        status: 'active',
+        cancelAtPeriodEnd: false,
+        currentPeriodEnd: null,
+      };
+
+      if (user.stripeSubscriptionId) {
+        const subscription = await stripe.subscriptions.retrieve(user.stripeSubscriptionId);
+        subscriptionData = {
+          currentPlan: user.plan || 'free',
+          status: subscription.status,
+          cancelAtPeriodEnd: subscription.cancel_at_period_end,
+          currentPeriodEnd: subscription.current_period_end,
+        };
+      }
+
+      res.json(subscriptionData);
+    } catch (error: any) {
+      logger.error('subscription', 'Failed to get subscription status', error, {}, req.user?.claims?.sub);
+      res.status(500).json({ error: { message: error.message } });
+    }
+  });
+
+  // Social media routes (Ayrshaer integration)
+  app.get('/api/social/profiles', isAuthenticated, async (req: any, res) => {
+    try {
+      if (!ayrshaerAPI) {
+        return res.status(503).json({ message: "Social media service not configured" });
+      }
+
+      const profiles = await ayrshaerAPI.getProfiles();
+      logger.logSocialMediaOperation('get_profiles', [], req.user.claims.sub);
+      res.json(profiles);
+    } catch (error: any) {
+      logger.error('social', 'Failed to get social profiles', error, {}, req.user?.claims?.sub);
+      res.status(500).json({ message: "Failed to fetch social profiles" });
+    }
+  });
+
+  app.post('/api/social/post', isAuthenticated, async (req: any, res) => {
+    try {
+      if (!ayrshaerAPI) {
+        return res.status(503).json({ message: "Social media service not configured" });
+      }
+
+      const userId = req.user.claims.sub;
+      const user = await storage.getUser(userId);
+      
+      // Check if user can perform social media posts based on their plan
+      const usage = await storage.getCurrentUsage(userId);
+      if (!canUserPerformAction(user?.plan || 'free', 'ai_request', usage)) {
+        return res.status(403).json({ message: "Social media posting limit reached. Please upgrade your plan." });
+      }
+
+      const { platforms, content, mediaUrls, scheduleDate } = req.body;
+      
+      const postData = {
+        platforms,
+        post: content,
+        mediaUrls,
+        scheduleDate,
+      };
+
+      let result;
+      if (scheduleDate) {
+        result = await ayrshaerAPI.schedulePost(postData);
+        logger.logSocialMediaOperation('schedule_post', platforms, userId);
+      } else {
+        result = await ayrshaerAPI.createPost(postData);
+        logger.logSocialMediaOperation('create_post', platforms, userId);
+      }
+
+      // Save to database
+      await storage.createSocialPost({
+        userId,
+        ayrshaerPostId: result.id,
+        platforms,
+        content,
+        mediaUrls,
+        scheduledFor: scheduleDate ? new Date(scheduleDate) : null,
+        publishedAt: scheduleDate ? null : new Date(),
+        status: scheduleDate ? 'scheduled' : 'published',
+      });
+
+      // Update usage tracking
+      await storage.incrementUsage(userId, 'socialPostsCount');
+
+      res.json(result);
+    } catch (error: any) {
+      logger.error('social', 'Failed to create social post', error, req.body, req.user?.claims?.sub);
+      res.status(500).json({ message: "Failed to create social media post" });
+    }
+  });
+
+  // Usage tracking and limits
+  app.get('/api/usage', isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = req.user.claims.sub;
+      const usage = await storage.getCurrentUsage(userId);
+      const user = await storage.getUser(userId);
+      const plan = getPlanById(user?.plan || 'free');
+      
+      res.json({
+        current: usage,
+        limits: plan?.limits,
+        canPerform: {
+          createArticle: canUserPerformAction(user?.plan || 'free', 'create_article', usage),
+          uploadMedia: canUserPerformAction(user?.plan || 'free', 'upload_media', usage),
+          createProduct: canUserPerformAction(user?.plan || 'free', 'create_product', usage),
+          aiRequest: canUserPerformAction(user?.plan || 'free', 'ai_request', usage),
+        },
+      });
+    } catch (error: any) {
+      logger.error('usage', 'Failed to get usage data', error, {}, req.user?.claims?.sub);
+      res.status(500).json({ message: "Failed to fetch usage data" });
+    }
+  });
+
+  // Health check endpoint
+  app.get('/api/health', (req, res) => {
+    const health = {
+      status: 'healthy',
+      timestamp: new Date().toISOString(),
+      services: {
+        database: 'connected',
+        ai: process.env.GEMINI_API_KEY ? 'configured' : 'missing',
+        stripe: process.env.STRIPE_SECRET_KEY ? 'configured' : 'missing',
+        social: process.env.AYRSHAER_API_KEY ? 'configured' : 'missing',
+      },
+    };
+    
+    logger.info('health', 'Health check requested', health);
+    res.json(health);
+  });
+
+  // Debug logs endpoint (development only)
+  if (process.env.NODE_ENV === 'development') {
+    app.get('/api/debug/logs', isAuthenticated, (req: any, res) => {
+      try {
+        const count = parseInt(req.query.count as string) || 100;
+        const logs = logger.getRecentLogs(count);
+        res.json(logs);
+      } catch (error: any) {
+        res.status(500).json({ message: "Failed to fetch debug logs" });
+      }
+    });
+  }
+
+  // Error handling middleware
+  app.use(errorLogger);
 
   const httpServer = createServer(app);
   return httpServer;

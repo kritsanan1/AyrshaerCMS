@@ -14,6 +14,8 @@ import Analytics from "@/pages/analytics";
 import AITools from "@/pages/ai-tools";
 import Payments from "@/pages/payments";
 import Languages from "@/pages/languages";
+import Pricing from "@/pages/pricing";
+import Checkout from "@/pages/checkout";
 import Settings from "@/pages/settings";
 
 function Router() {
@@ -33,6 +35,8 @@ function Router() {
           <Route path="/ai-tools" component={AITools} />
           <Route path="/payments" component={Payments} />
           <Route path="/languages" component={Languages} />
+          <Route path="/pricing" component={Pricing} />
+          <Route path="/checkout" component={Checkout} />
           <Route path="/settings" component={Settings} />
         </>
       )}

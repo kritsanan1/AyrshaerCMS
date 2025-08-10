@@ -7,6 +7,9 @@ import {
   aiInsights,
   languages,
   payments,
+  subscriptions,
+  usageTracking,
+  socialPosts,
   type User,
   type UpsertUser,
   type Article,
@@ -23,6 +26,8 @@ import {
   type InsertLanguage,
   type Payment,
   type InsertPayment,
+  type SocialPost,
+  type InsertSocialPost,
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, desc, count, sql, and, gte, lte } from "drizzle-orm";
@@ -31,7 +36,6 @@ export interface IStorage {
   // User operations - mandatory for Replit Auth
   getUser(id: string): Promise<User | undefined>;
   upsertUser(user: UpsertUser): Promise<User>;
-  updateUserStripeInfo(userId: string, stripeCustomerId: string, stripeSubscriptionId: string): Promise<User>;
 
   // Article operations
   getArticles(userId: string, limit?: number): Promise<Article[]>;
@@ -81,6 +85,23 @@ export interface IStorage {
     lastMonth: number;
     totalTransactions: number;
   }>;
+
+  // Subscription operations
+  updateUserPlan(userId: string, planId: string): Promise<void>;
+  updateUserStripeInfo(userId: string, customerId: string, subscriptionId: string): Promise<void>;
+  
+  // Usage tracking operations
+  getCurrentUsage(userId: string): Promise<{
+    articles: number;
+    media: number;
+    products: number;
+    aiRequests: number;
+    socialPostsCount: number;
+  }>;
+  incrementUsage(userId: string, type: 'articlesCount' | 'mediaStorageUsed' | 'productsCount' | 'aiRequestsCount' | 'socialPostsCount'): Promise<void>;
+
+  // Social media operations
+  createSocialPost(post: InsertSocialPost): Promise<SocialPost>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -382,6 +403,101 @@ export class DatabaseStorage implements IStorage {
       lastMonth: Number(lastMonthResult.total) || 0,
       totalTransactions: transactionsResult.count,
     };
+  }
+
+  // Subscription operations
+  async updateUserPlan(userId: string, planId: string): Promise<void> {
+    await db
+      .update(users)
+      .set({ plan: planId, updatedAt: new Date() })
+      .where(eq(users.id, userId));
+  }
+
+  async updateUserStripeInfo(userId: string, customerId: string, subscriptionId: string): Promise<void> {
+    await db
+      .update(users)
+      .set({ 
+        stripeCustomerId: customerId,
+        stripeSubscriptionId: subscriptionId,
+        updatedAt: new Date()
+      })
+      .where(eq(users.id, userId));
+  }
+
+  // Usage tracking operations
+  async getCurrentUsage(userId: string): Promise<{
+    articles: number;
+    media: number;
+    products: number;
+    aiRequests: number;
+    socialPostsCount: number;
+  }> {
+    const currentMonth = new Date().toISOString().slice(0, 7); // YYYY-MM
+    
+    const [usage] = await db
+      .select()
+      .from(usageTracking)
+      .where(
+        and(
+          eq(usageTracking.userId, userId),
+          eq(usageTracking.month, currentMonth)
+        )
+      );
+
+    if (!usage) {
+      // Create initial usage record
+      await db.insert(usageTracking).values({
+        userId,
+        month: currentMonth,
+        articlesCount: 0,
+        mediaStorageUsed: 0,
+        productsCount: 0,
+        aiRequestsCount: 0,
+        socialPostsCount: 0,
+      });
+
+      return {
+        articles: 0,
+        media: 0,
+        products: 0,
+        aiRequests: 0,
+        socialPostsCount: 0,
+      };
+    }
+
+    return {
+      articles: usage.articlesCount,
+      media: usage.mediaStorageUsed,
+      products: usage.productsCount,
+      aiRequests: usage.aiRequestsCount,
+      socialPostsCount: usage.socialPostsCount,
+    };
+  }
+
+  async incrementUsage(userId: string, type: 'articlesCount' | 'mediaStorageUsed' | 'productsCount' | 'aiRequestsCount' | 'socialPostsCount'): Promise<void> {
+    const currentMonth = new Date().toISOString().slice(0, 7);
+    
+    // Ensure usage record exists
+    await this.getCurrentUsage(userId);
+    
+    await db
+      .update(usageTracking)
+      .set({
+        [type]: sql`${usageTracking[type]} + 1`,
+        updatedAt: new Date(),
+      })
+      .where(
+        and(
+          eq(usageTracking.userId, userId),
+          eq(usageTracking.month, currentMonth)
+        )
+      );
+  }
+
+  // Social media operations
+  async createSocialPost(post: InsertSocialPost): Promise<SocialPost> {
+    const [newPost] = await db.insert(socialPosts).values(post).returning();
+    return newPost;
   }
 }
 

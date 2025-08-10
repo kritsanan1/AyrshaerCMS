@@ -24,6 +24,7 @@ const navigation = [
   { name: "Analytics", href: "/analytics", icon: BarChart3 },
   { name: "AI Tools", href: "/ai-tools", icon: Brain, isNew: true },
   { name: "Payments", href: "/payments", icon: CreditCard },
+  { name: "Pricing", href: "/pricing", icon: Crown },
   { name: "Languages", href: "/languages", icon: Globe },
   { name: "Settings", href: "/settings", icon: Settings },
 ];

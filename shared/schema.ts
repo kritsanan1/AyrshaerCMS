@@ -139,14 +139,61 @@ export const payments = pgTable("payments", {
   createdAt: timestamp("created_at").defaultNow(),
 });
 
+// Subscription tracking table
+export const subscriptions = pgTable("subscriptions", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").references(() => users.id).notNull(),
+  planId: varchar("plan_id").notNull(), // free, premium, pro
+  stripeSubscriptionId: varchar("stripe_subscription_id"),
+  status: varchar("status", { length: 50 }).notNull(), // active, canceled, past_due, etc.
+  currentPeriodStart: timestamp("current_period_start"),
+  currentPeriodEnd: timestamp("current_period_end"),
+  cancelAtPeriodEnd: boolean("cancel_at_period_end").default(false),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+// Usage tracking table for plan limits
+export const usageTracking = pgTable("usage_tracking", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").references(() => users.id).notNull(),
+  month: varchar("month", { length: 7 }).notNull(), // YYYY-MM format
+  articlesCount: integer("articles_count").default(0),
+  mediaStorageUsed: integer("media_storage_used").default(0), // in MB
+  productsCount: integer("products_count").default(0),
+  aiRequestsCount: integer("ai_requests_count").default(0),
+  socialPostsCount: integer("social_posts_count").default(0),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+// Social media posts table for Ayrshaer integration
+export const socialPosts = pgTable("social_posts", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").references(() => users.id).notNull(),
+  ayrshaerPostId: varchar("ayrshaer_post_id"),
+  platforms: text("platforms").array().notNull(), // ['twitter', 'facebook', 'linkedin']
+  content: text("content").notNull(),
+  mediaUrls: text("media_urls").array(),
+  scheduledFor: timestamp("scheduled_for"),
+  publishedAt: timestamp("published_at"),
+  status: varchar("status", { length: 50 }).default("draft"), // draft, scheduled, published, failed
+  analytics: jsonb("analytics"), // likes, shares, comments, etc.
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
 // Relations
-export const usersRelations = relations(users, ({ many }) => ({
+export const usersRelations = relations(users, ({ many, one }) => ({
   articles: many(articles),
   media: many(media),
   products: many(products),
   analytics: many(analytics),
   aiInsights: many(aiInsights),
   payments: many(payments),
+  subscription: one(subscriptions),
+  usageTracking: many(usageTracking),
+  socialPosts: many(socialPosts),
 }));
 
 export const articlesRelations = relations(articles, ({ one }) => ({
@@ -187,6 +234,27 @@ export const aiInsightsRelations = relations(aiInsights, ({ one }) => ({
 export const paymentsRelations = relations(payments, ({ one }) => ({
   user: one(users, {
     fields: [payments.userId],
+    references: [users.id],
+  }),
+}));
+
+export const subscriptionsRelations = relations(subscriptions, ({ one }) => ({
+  user: one(users, {
+    fields: [subscriptions.userId],
+    references: [users.id],
+  }),
+}));
+
+export const usageTrackingRelations = relations(usageTracking, ({ one }) => ({
+  user: one(users, {
+    fields: [usageTracking.userId],
+    references: [users.id],
+  }),
+}));
+
+export const socialPostsRelations = relations(socialPosts, ({ one }) => ({
+  user: one(users, {
+    fields: [socialPosts.userId],
     references: [users.id],
   }),
 }));
@@ -238,6 +306,30 @@ export const insertLanguageSchema = createInsertSchema(languages).omit({
 });
 export type InsertLanguage = z.infer<typeof insertLanguageSchema>;
 export type Language = typeof languages.$inferSelect;
+
+export const insertSubscriptionSchema = createInsertSchema(subscriptions).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+export type InsertSubscription = z.infer<typeof insertSubscriptionSchema>;
+export type Subscription = typeof subscriptions.$inferSelect;
+
+export const insertUsageTrackingSchema = createInsertSchema(usageTracking).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+export type InsertUsageTracking = z.infer<typeof insertUsageTrackingSchema>;
+export type UsageTracking = typeof usageTracking.$inferSelect;
+
+export const insertSocialPostSchema = createInsertSchema(socialPosts).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+export type InsertSocialPost = z.infer<typeof insertSocialPostSchema>;
+export type SocialPost = typeof socialPosts.$inferSelect;
 
 export const insertPaymentSchema = createInsertSchema(payments).omit({
   id: true,
