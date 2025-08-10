@@ -1,0 +1,113 @@
+# Project Name: Ayrshaer CMS
+
+## Description
+Ayrshaer CMS is a cross-platform mobile app for content management, enabling users to efficiently manage articles, images, and products with integrated payment, analytics, AI-driven personalization, and advanced features like AI content creation and predictive analytics.
+
+## Primary Goals
+- Enable seamless content, media, and product management.
+- Integrate Stripe for payment processing.
+- Utilize Google Analytics for tracking and analytics.
+- Incorporate Gemini AI for content recommendations and personalization.
+- Provide a freemium SaaS model targeting individual creators and businesses.
+- Introduce AI-driven content creation tools and predictive analytics.
+- Enhance security with biometric authentication.
+- Support multi-language content management.
+- Offer API integrations for third-party services.
+
+----------------------------------------------------
+
+## Tech Stack & Environment
+
+**Frontend:** Vite + React + TypeScript + Tailwind CSS
+
+**Backend:** Supabase (PostgreSQL + Auth)
+
+**Target Platform:** Single-Page Application
+
+**Framework Versions & Config:** Latest stable versions
+
+----------------------------------------------------
+
+## Requirements & Features
+
+### Core Features:
+- User-friendly dashboard for managing articles, images, and products.
+- Integrated Stripe payment processing for transactions.
+- Google Analytics for tracking user interactions and app performance.
+- Gemini AI-driven content recommendations and personalization.
+- Comprehensive media library management.
+- Product catalog management.
+- Detailed analytics reports for user and business insights.
+- AI-driven content creation tools.
+- Predictive analytics for user engagement.
+- Enhanced security with biometric authentication.
+- Multi-language content management.
+- API integrations for third-party services.
+
+### User Flows
+- User registration and login authentication.
+- Dashboard navigation for managing content, images, and products.
+- Payment processing workflow integrated with Stripe.
+- Access and interaction with analytics reports.
+- Personalized content recommendations and insights.
+- AI content creation and editing workflow.
+- Multi-language content switching and management.
+
+### Business Rules
+- Freemium model with tiered feature access.
+- Secure data handling and compliance with data protection regulations.
+- Real-time updates and notifications for content and product changes.
+- Access control adjustments for biometric authentication.
+- API usage and rate limiting policies.
+
+----------------------------------------------------
+
+## UI/UX Design
+
+### Layout
+- Intuitive navigation with a focus on ease-of-use across devices.
+- Responsive design to ensure compatibility with various screen sizes.
+
+### Look & Feel
+- Modern, clean aesthetic with a focus on usability and accessibility.
+- Consistent color schemes and typography to establish brand identity.
+
+### Pages
+- Dashboard
+- Article Management
+- Media Library
+- Product Catalog
+- Analytics Reports
+- AI Content Creation Tool
+- Multi-language Management
+
+### Components
+- Navigation Bar
+- Content Editor
+- Media Carousel
+- Product Display Cards
+- Analytics Graphs
+- AI Tools Interface
+- Language Selector
+
+----------------------------------------------------
+
+## Data Model & Supabase Setup
+
+### Database Schema
+- Article Management (Title, Content, Tags, Status, Language)
+- Media Library (File Name, Type, URL, Metadata)
+- Product Catalog (Name, Description, Price, SKU, Inventory)
+- User Accounts (Username, Email, Password, Subscription Tier, Biometric Data)
+
+### Row-Level Security
+Enabled by default
+
+### Auth Requirements
+- Email and password authentication with multi-factor options.
+- OAuth integration for social media logins.
+- Role-based access control for different user tiers.
+- Biometric authentication for enhanced security.
+
+### API Integration
+- Third-party API integration support for extending functionality and services.
